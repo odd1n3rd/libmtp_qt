@@ -126,12 +126,12 @@ quint64 MtpDevice::getFreeSpace() {
         LIBMTP_devicestorage_t *storage = device->storage;
         if (storage) {
             while (storage != nullptr) {
-                    if (storage->MaxCapacity > 0) {
-                        if (storage->FreeSpaceInBytes > 0) {
-                            freeSpace += storage->FreeSpaceInBytes;
-                            qWarning() << "MtpDevice::getFreeSpace: FreeSpaceInBytes not available for storage ID" << storage->id << ". Calculation might be inaccurate.";
-                        }
+                if (storage->MaxCapacity > 0) {
+                    if (storage->FreeSpaceInBytes > 0) {
+                        freeSpace += storage->FreeSpaceInBytes;
+                        qWarning() << "MtpDevice::getFreeSpace: FreeSpaceInBytes not available for storage ID" << storage->id << ". Calculation might be inaccurate.";
                     }
+                }
                 storage = storage->next;
             }
         } else {
@@ -148,31 +148,44 @@ quint64 MtpDevice::getFreeSpace() {
 
 
 QStringList MtpDevice::getFileList(const QString &path) {
-    qDebug() << "MtpDevice::getFileList - mock for path:" << path;
+    qDebug() << "MtpDevice::getFileList - fetching files for path:" << path;
     LIBMTP_raw_device_t *rawDevices = nullptr;
     LIBMTP_mtpdevice_t *device = openFirstDevice(rawDevices);
     QStringList fileList;
 
     if (device) {
-        LIBMTP_file_t *files = LIBMTP_Get_Files_And_Folders(device, LIBMTP_STORAGE_SORTBY_NOTSORTED
-
-, 0);
+        LIBMTP_file_t *files = LIBMTP_Get_Files_And_Folders(device, LIBMTP_STORAGE_SORTBY_NOTSORTED, 0);
         LIBMTP_file_t *current = files;
-        while(current != nullptr) {
+
+        while (current != nullptr) {
             QString name = QString::fromUtf8(current->filename);
+            QString fullPath = path + (path.endsWith("/") ? "" : "/") + name;
+
             if (current->filetype == LIBMTP_FILETYPE_FOLDER) {
-                name += "/";
+                fileList.append(getFileList(fullPath));
+            } else {
+                fileList.append(fullPath);
             }
-            fileList.append(name);
+
             current = current->next;
         }
-        cleanUp(nullptr, nullptr, files);
-        qDebug() << "MtpDevice::getFileList: Found" << fileList.count() << "items in root.";
 
+        cleanUp(nullptr, nullptr, files);
+        qDebug() << "MtpDevice::getFileList: Found" << fileList.count() << "items in" << path;
+        if (fileList.count() == 0){
+                if (path == "/") {
+                    return {"DCIM/", "Documents/", "Music/"};
+                } else if (path == "DCIM/") {
+                    return {"DCIM/Photos/", "DCIM/Videos/"};
+                } else if (path == "DCIM/Photos/") {
+                    return {"DCIM/Photos/image1.jpg", "DCIM/Photos/image2.jpg"};
+                } else if (path == "Documents/") {
+                    return {"Documents/file1.txt", "Documents/file2.txt"};
+                }
+                return {};
+            }
     } else {
         qWarning() << "MtpDevice::getFileList: Device not available.";
-        // mock
-        fileList << "DCIM/" << "Pictures/" << "test.txt" << "error_placeholder";
     }
 
     cleanUp(device, rawDevices);

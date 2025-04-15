@@ -2,6 +2,7 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
+#include <QStandardItemModel>
 #include "mtpviewmodel.h"
 
 
@@ -32,5 +33,6 @@ private slots:
 private:
     Ui::MainWindow *ui;
     MtpViewModel *viewModel;
+    QStandardItemModel *fileModel;
 };
 #endif // MAINWINDOW_H

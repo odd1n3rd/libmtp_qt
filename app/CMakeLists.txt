@@ -13,6 +13,6 @@ set_target_properties(${APP_NAME} PROPERTIES AUTOMOC ON AUTOUIC ON)
 
 target_link_libraries(${APP_NAME} PRIVATE
     Qt6::Widgets
+    Qt6::Gui
     libmtpviewmodel
 )
-

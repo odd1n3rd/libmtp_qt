@@ -21,15 +21,16 @@ void MtpViewModel::setBusy(bool busy) {
 
 
 QString MtpViewModel::deviceInfo() const {
-    return cachedDeviceInfo;
+    return MtpDevice::getDeviceInfo() + " (" + MtpDevice::getDeviceVersion() + ")";
 }
 
 QString MtpViewModel::freeSpace() const {
-    return cachedFreeSpace;
+    quint64 bytes = MtpDevice::getFreeSpace();
+    return bytes > 0 ? QString::number(bytes / (1024 * 1024)) + " MB" : "Unknown";
 }
 
 QStringList MtpViewModel::fileList() {
-    return cachedFileList;
+    return MtpDevice::getFileList();
 }
 
 void MtpViewModel::refreshDevice() {
@@ -45,18 +46,21 @@ void MtpViewModel::refreshDevice() {
     connect(watcher, &QFutureWatcher<void>::finished, this, [this, watcher]() {
         qDebug() << "Device info and file list refresh finished.";
         emit deviceUpdated();
-        emit fileListUpdated(cachedFileList);
+        emit fileListUpdated(MtpDevice::getFileList());
         setBusy(false);
         watcher->deleteLater();
     });
 
-
     QFuture<void> future = QtConcurrent::run([this]() {
-        cachedDeviceInfo = MtpDevice::getDeviceInfo() + " (" + MtpDevice::getDeviceVersion() + ")";
+
+        QString deviceInfo = MtpDevice::getDeviceInfo() + " (" + MtpDevice::getDeviceVersion() + ")";
         quint64 bytes = MtpDevice::getFreeSpace();
-        cachedFreeSpace = bytes > 0 ? QString::number(bytes / (1024 * 1024)) + " MB" : "Unknown";
-        cachedFileList = MtpDevice::getFileList();
+        QString freeSpace = bytes > 0 ? QString::number(bytes / (1024 * 1024)) + " MB" : "Unknown";
+
+        qDebug() << "Device Info:" << deviceInfo;
+        qDebug() << "Free Space:" << freeSpace;
     });
+    watcher->setFuture(future);
     watcher->setFuture(future);
 }
 
@@ -88,19 +92,24 @@ void MtpViewModel::runAsyncOperation(std::function<bool()> operation, const QStr
 }
 
 void MtpViewModel::refreshFileListOnly() {
-    QFutureWatcher<void> *watcher = new QFutureWatcher<void>(this);
-    connect(watcher, &QFutureWatcher<void>::finished, this, [this, watcher]() {
-        qDebug() << "File list refresh finished.";
-        emit fileListUpdated(cachedFileList);
+    if (m_isBusy) {
+        qDebug() << "ViewModel is busy, refresh skipped.";
+        emit operationFailed("Operation skipped: Another operation is in progress.");
+        return;
+    }
+    setBusy(true);
+    qDebug() << "Refreshing file list only...";
+
+    QFutureWatcher<QStringList> *watcher = new QFutureWatcher<QStringList>(this);
+    connect(watcher, &QFutureWatcher<QStringList>::finished, this, [this, watcher]() {
+        QStringList fileList = watcher->result();
+        emit fileListUpdated(fileList);
         setBusy(false);
         watcher->deleteLater();
     });
 
-    QFuture<void> future = QtConcurrent::run([this]() {
-        cachedFileList = MtpDevice::getFileList();
-        if (cachedFileList.isEmpty() && !MtpDevice::getDeviceInfo().startsWith("Error")) {
-           emit operationFailed("Failed to refresh file list.");
-        }
+    QFuture<QStringList> future = QtConcurrent::run([this]() {
+        return MtpDevice::getFileList();
     });
     watcher->setFuture(future);
 }

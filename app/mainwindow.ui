@@ -23,7 +23,7 @@
      </widget>
     </item>
     <item>
-     <widget class="QListWidget" name="fileListWidget"/>
+     <widget class="QTreeView" name="fileTreeView"/>
     </item>
     <item>
      <layout class="QHBoxLayout" name="horizontalLayout">
@@ -88,3 +88,4 @@
  <resources/>
  <connections/>
 </ui>
+

@@ -9,8 +9,11 @@ MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
     , viewModel(new MtpViewModel(this))
+    , fileModel(new QStandardItemModel(this))
 {
     ui->setupUi(this);
+    ui->fileTreeView->setModel(fileModel);
+    fileModel->setHorizontalHeaderLabels({"Name"});
 
     connect(viewModel, &MtpViewModel::deviceUpdated, this, &MainWindow::updateDeviceInfo);
     connect(viewModel, &MtpViewModel::fileListUpdated, this, &MainWindow::updateFileList);
@@ -40,8 +43,39 @@ void MainWindow::updateDeviceInfo() {
 }
 
 void MainWindow::updateFileList(const QStringList &files) {
-    ui->fileListWidget->clear();
-    ui->fileListWidget->addItems(files);
+    fileModel->clear();
+    fileModel->setHorizontalHeaderLabels({"Name"});
+    QStandardItem *rootItem = fileModel->invisibleRootItem();
+
+    for (const QString &file : files) {
+        QStringList parts = file.split('/');
+        QStandardItem *parent = rootItem;
+
+        for (const QString &part : parts) {
+            if (part.isEmpty()) continue;
+
+            QStandardItem *parentItem = rootItem;
+            for (const QString &part : parts) {
+                if (part.isEmpty()) continue;
+
+                QStandardItem *item = nullptr;
+                for (int i = 0; i < parentItem->rowCount(); ++i) {
+                    QStandardItem *child = parentItem->child(i);
+                    if (child->text() == part) {
+                        item = child;
+                        break;
+                    }
+                }
+
+                if (!item) {
+                    item = new QStandardItem(part);
+                    parentItem->appendRow(item);
+                }
+                parentItem = item;
+            }
+
+        }
+    }
 }
 
 void MainWindow::displayError(const QString &error) {
@@ -75,8 +109,15 @@ void MainWindow::onCreateDirectoryClicked() {
     }
 }
 
+
 void MainWindow::onDeleteDirectoryClicked() {
-    QListWidgetItem *item = ui->fileListWidget->currentItem();
+    QModelIndex currentIndex = ui->fileTreeView->currentIndex();
+    if (!currentIndex.isValid()) {
+        QMessageBox::warning(this, "Error", "Select a directory to delete.");
+        return;
+    }
+
+    QStandardItem *item = fileModel->itemFromIndex(currentIndex);
     if (item) {
         QString path = item->text();
         if (path.endsWith('/')) {
@@ -84,8 +125,6 @@ void MainWindow::onDeleteDirectoryClicked() {
         } else {
             QMessageBox::warning(this, "Error", "Please select a directory (ending with '/').");
         }
-    } else {
-        QMessageBox::warning(this, "Error", "Select a directory to delete.");
     }
 }
 
@@ -105,7 +144,13 @@ void MainWindow::onWriteFileClicked() {
 }
 
 void MainWindow::onReadFileClicked() {
-    QListWidgetItem *item = ui->fileListWidget->currentItem();
+    QModelIndex currentIndex = ui->fileTreeView->currentIndex();
+    if (!currentIndex.isValid()) {
+        QMessageBox::warning(this, "Error", "Select a file to read.");
+        return;
+    }
+
+    QStandardItem *item = fileModel->itemFromIndex(currentIndex);
     if (item) {
         QString path = item->text();
         if (!path.endsWith('/')) {
@@ -113,13 +158,17 @@ void MainWindow::onReadFileClicked() {
         } else {
             QMessageBox::warning(this, "Error", "Please select a file, not a directory.");
         }
-    } else {
-        QMessageBox::warning(this, "Error", "Select a file to read.");
     }
 }
 
 void MainWindow::onDeleteFileClicked() {
-    QListWidgetItem *item = ui->fileListWidget->currentItem();
+    QModelIndex currentIndex = ui->fileTreeView->currentIndex();
+    if (!currentIndex.isValid()) {
+        QMessageBox::warning(this, "Error", "Select a file to delete.");
+        return;
+    }
+
+    QStandardItem *item = fileModel->itemFromIndex(currentIndex);
     if (item) {
         QString path = item->text();
         if (!path.endsWith('/')) {
@@ -127,7 +176,5 @@ void MainWindow::onDeleteFileClicked() {
         } else {
             QMessageBox::warning(this, "Error", "Please select a file, not a directory.");
         }
-    } else {
-        QMessageBox::warning(this, "Error", "Select a file to delete.");
     }
 }

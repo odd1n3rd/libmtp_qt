@@ -40,9 +40,6 @@ private:
     void refreshFileListOnly();
     void setBusy(bool busy);
 
-    QString cachedDeviceInfo = "Initializing...";
-    QString cachedFreeSpace = "N/A";
-    QStringList cachedFileList;
     bool m_isBusy;
 };
 

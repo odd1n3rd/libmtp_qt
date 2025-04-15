@@ -17,9 +17,10 @@ target_include_directories(${LIB_NAME} PUBLIC
 target_link_libraries(${LIB_NAME} PRIVATE
     Qt6::Core
     Qt6::Concurrent
+    Qt6::Gui
+    Qt6::Widgets
     ${LIBMTP_LIBRARY}
 )
 
 target_compile_features(${LIB_NAME} PRIVATE cxx_std_17)
 set_target_properties(${LIB_NAME} PROPERTIES AUTOMOC ON)
-
