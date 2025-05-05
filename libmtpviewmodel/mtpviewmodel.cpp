@@ -1,10 +1,10 @@
 #include "mtpviewmodel.h"
-#include "mtpdevice.h"
+//#include "mtpdevice.h"
 #include <QtConcurrent>
 #include <QFutureWatcher>
 
-MtpViewModel::MtpViewModel(QObject *parent)
-    : QObject(parent), m_isBusy(false)
+MtpViewModel::MtpViewModel(IMtpDevice *device, QObject *parent)
+    : QObject(parent),m_device(device), m_isBusy(false)
 {
     refreshDevice();
 }
@@ -21,15 +21,20 @@ void MtpViewModel::setBusy(bool busy) {
 
 
 QString MtpViewModel::deviceInfo() const {
-    return cachedDeviceInfo;
+    return m_device->getDeviceInfo() + " (" + m_device->getDeviceVersion() + ")";
 }
 
 QString MtpViewModel::freeSpace() const {
-    return cachedFreeSpace;
+    quint64 bytes = m_device->getFreeSpace();
+    return bytes > 0 ? QString::number(bytes / (1024 * 1024)) + " MB" : "Unknown";
 }
 
 QStringList MtpViewModel::fileList() {
-    return cachedFileList;
+    return m_device->getFileList();
+}
+
+QStringList MtpViewModel::fileList(const QString &path) {
+    return m_device->getFileList(path);
 }
 
 void MtpViewModel::refreshDevice() {
@@ -45,18 +50,21 @@ void MtpViewModel::refreshDevice() {
     connect(watcher, &QFutureWatcher<void>::finished, this, [this, watcher]() {
         qDebug() << "Device info and file list refresh finished.";
         emit deviceUpdated();
-        emit fileListUpdated(cachedFileList);
+        emit fileListUpdated(m_device->getFileList());
         setBusy(false);
         watcher->deleteLater();
     });
 
-
     QFuture<void> future = QtConcurrent::run([this]() {
-        cachedDeviceInfo = MtpDevice::getDeviceInfo() + " (" + MtpDevice::getDeviceVersion() + ")";
-        quint64 bytes = MtpDevice::getFreeSpace();
-        cachedFreeSpace = bytes > 0 ? QString::number(bytes / (1024 * 1024)) + " MB" : "Unknown";
-        cachedFileList = MtpDevice::getFileList();
+
+        QString deviceInfo = m_device->getDeviceInfo() + " (" + m_device->getDeviceVersion() + ")";
+        quint64 bytes = m_device->getFreeSpace();
+        QString freeSpace = bytes > 0 ? QString::number(bytes / (1024 * 1024)) + " MB" : "Unknown";
+
+        qDebug() << "Device Info:" << deviceInfo;
+        qDebug() << "Free Space:" << freeSpace;
     });
+    watcher->setFuture(future);
     watcher->setFuture(future);
 }
 
@@ -79,6 +87,7 @@ void MtpViewModel::runAsyncOperation(std::function<bool()> operation, const QStr
         } else {
             qWarning() << "Operation failed:" << failureMessageBase;
             emit operationFailed(failureMessageBase);
+            setBusy(false);
         }
         watcher->deleteLater();
     });
@@ -88,19 +97,24 @@ void MtpViewModel::runAsyncOperation(std::function<bool()> operation, const QStr
 }
 
 void MtpViewModel::refreshFileListOnly() {
-    QFutureWatcher<void> *watcher = new QFutureWatcher<void>(this);
-    connect(watcher, &QFutureWatcher<void>::finished, this, [this, watcher]() {
-        qDebug() << "File list refresh finished.";
-        emit fileListUpdated(cachedFileList);
+    // if (m_isBusy) {
+    //     qDebug() << "ViewModel is busy, refresh skipped.";
+    //     emit operationFailed("Operation skipped: Another operation is in progress.");
+    //     return;
+    // }
+    setBusy(true);
+    qDebug() << "Refreshing file list only...";
+
+    QFutureWatcher<QStringList> *watcher = new QFutureWatcher<QStringList>(this);
+    connect(watcher, &QFutureWatcher<QStringList>::finished, this, [this, watcher]() {
+        QStringList fileList = watcher->result();
+        emit fileListUpdated(fileList);
         setBusy(false);
         watcher->deleteLater();
     });
 
-    QFuture<void> future = QtConcurrent::run([this]() {
-        cachedFileList = MtpDevice::getFileList();
-        if (cachedFileList.isEmpty() && !MtpDevice::getDeviceInfo().startsWith("Error")) {
-           emit operationFailed("Failed to refresh file list.");
-        }
+    QFuture<QStringList> future = QtConcurrent::run([this]() {
+        return m_device->getFileList();
     });
     watcher->setFuture(future);
 }
@@ -128,9 +142,9 @@ void MtpViewModel::readFile(const QString &path) {
         watcher->deleteLater();
     });
 
-    QFuture<QByteArray> future = QtConcurrent::run([path]() -> QByteArray {
+    QFuture<QByteArray> future = QtConcurrent::run([this, path]() -> QByteArray {
         QByteArray fileData;
-        if (MtpDevice::readFile(path, fileData)) {
+        if (m_device->readFile(path, fileData)) {
             return fileData;
         } else {
             return QByteArray();
@@ -141,7 +155,7 @@ void MtpViewModel::readFile(const QString &path) {
 
 void MtpViewModel::writeFile(const QString &path, const QByteArray &data) {
     runAsyncOperation(
-        [path, data]() { return MtpDevice::writeFile(path, data); },
+        [this, path, data]() { return m_device->writeFile(path, data); },
         "File written successfully: " + path,
         "Failed to write file: " + path
         );
@@ -149,7 +163,7 @@ void MtpViewModel::writeFile(const QString &path, const QByteArray &data) {
 
 void MtpViewModel::deleteFile(const QString &path) {
     runAsyncOperation(
-        [path]() { return MtpDevice::deleteFile(path); },
+        [this, path]() { return m_device->deleteFile(path); },
         "File deleted successfully: " + path,
         "Failed to delete file: " + path
         );
@@ -157,7 +171,7 @@ void MtpViewModel::deleteFile(const QString &path) {
 
 void MtpViewModel::createDirectory(const QString &path) {
     runAsyncOperation(
-        [path]() { return MtpDevice::createDirectory(path); },
+        [this, path]() { return m_device->createDirectory(path); },
         "Directory created successfully: " + path,
         "Failed to create directory: " + path
         );
@@ -165,7 +179,7 @@ void MtpViewModel::createDirectory(const QString &path) {
 
 void MtpViewModel::deleteDirectory(const QString &path) {
     runAsyncOperation(
-        [path]() { return MtpDevice::deleteDirectory(path); },
+        [this, path]() { return m_device->deleteDirectory(path); },
         "Directory deleted successfully: " + path,
         "Failed to delete directory: " + path
         );

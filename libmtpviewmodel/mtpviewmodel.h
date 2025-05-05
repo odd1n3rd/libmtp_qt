@@ -5,18 +5,20 @@
 #include <QStringList>
 #include <QByteArray>
 #include <functional>
+#include "imtdevice.h"
 
 class MtpViewModel : public QObject {
     Q_OBJECT
     Q_PROPERTY(bool isBusy READ isBusy NOTIFY busyChanged)
 
 public:
-    explicit MtpViewModel(QObject *parent = nullptr);
+    explicit MtpViewModel(IMtpDevice *device, QObject *parent = nullptr);
     ~MtpViewModel();
 
     QString deviceInfo() const;
     QString freeSpace() const;
     QStringList fileList();
+    QStringList fileList(const QString &path);
 
 
     bool isBusy() const { return m_isBusy; }
@@ -40,9 +42,7 @@ private:
     void refreshFileListOnly();
     void setBusy(bool busy);
 
-    QString cachedDeviceInfo = "Initializing...";
-    QString cachedFreeSpace = "N/A";
-    QStringList cachedFileList;
+    IMtpDevice *m_device;
     bool m_isBusy;
 };
 

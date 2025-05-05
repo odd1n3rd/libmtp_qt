@@ -13,6 +13,8 @@ struct MtpDeviceInfo {
     QString mtpVersion;
 };
 
+
+
 class MtpDevice {
 public:
     static QVector<MtpDeviceInfo> detectDevices();

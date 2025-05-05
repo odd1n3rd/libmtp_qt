@@ -5,18 +5,20 @@
 #include <QMessageBox>
 #include <QTextStream>
 
-MainWindow::MainWindow(QWidget *parent)
+MainWindow::MainWindow(IMtpDevice *device, QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
-    , viewModel(new MtpViewModel(this))
+    , viewModel(new MtpViewModel(device, this))
+    , fileModel(new QStandardItemModel(this))
 {
     ui->setupUi(this);
+    ui->fileTreeView->setModel(fileModel);
+    fileModel->setHorizontalHeaderLabels({"Name"});
 
     connect(viewModel, &MtpViewModel::deviceUpdated, this, &MainWindow::updateDeviceInfo);
     connect(viewModel, &MtpViewModel::fileListUpdated, this, &MainWindow::updateFileList);
     connect(viewModel, &MtpViewModel::operationFailed, this, &MainWindow::displayError);
     connect(viewModel, &MtpViewModel::fileRead, this, &MainWindow::displayFileData);
-
 
     connect(ui->refreshButton, &QPushButton::clicked, this, &MainWindow::onRefreshButtonClicked);
     connect(ui->createDirButton, &QPushButton::clicked, this, &MainWindow::onCreateDirectoryClicked);
@@ -31,7 +33,6 @@ MainWindow::MainWindow(QWidget *parent)
 MainWindow::~MainWindow()
 {
     delete ui;
-
 }
 
 void MainWindow::updateDeviceInfo() {
@@ -39,9 +40,71 @@ void MainWindow::updateDeviceInfo() {
     ui->deviceInfoLabel->setText(info);
 }
 
+QString MainWindow::getFullPath(QStandardItem *item) const {
+    QStringList parts;
+    while (item) {
+        parts.prepend(item->text());
+        item = item->parent();
+    }
+    QString path = parts.join('/');
+    if (!path.isEmpty() && !path.endsWith('/')) {
+        QVariant isDir = fileModel->itemFromIndex(fileModel->indexFromItem(fileModel->findItems(parts.last(), Qt::MatchExactly | Qt::MatchRecursive).value(0)))->data(Qt::UserRole + 2);
+        if (isDir.isValid() && isDir.toBool())
+            path += '/';
+    }
+    return path;
+}
+
 void MainWindow::updateFileList(const QStringList &files) {
-    ui->fileListWidget->clear();
-    ui->fileListWidget->addItems(files);
+    QSet<QString> allPaths;
+    for (const QString &file : files) {
+        QString normalized = file;
+        if (normalized.startsWith('/')) normalized = normalized.mid(1);
+        QStringList parts = normalized.split('/', Qt::SkipEmptyParts);
+        QString path;
+        for (int i = 0; i < parts.size(); ++i) {
+            path += (path.isEmpty() ? "" : "/") + parts[i];
+            if (i < parts.size() - 1 || file.endsWith('/')) {
+                allPaths.insert(path + "/");
+            } else {
+                allPaths.insert(path);
+            }
+        }
+    }
+
+    QStringList sortedPaths = allPaths.values();
+    std::sort(sortedPaths.begin(), sortedPaths.end());
+
+    fileModel->clear();
+    fileModel->setHorizontalHeaderLabels({"Name"});
+    QStandardItem *rootItem = fileModel->invisibleRootItem();
+
+    for (const QString &file : sortedPaths) {
+        QString normalized = file;
+        if (normalized.startsWith('/')) normalized = normalized.mid(1);
+        QStringList parts = normalized.split('/', Qt::SkipEmptyParts);
+        QStandardItem *parent = rootItem;
+        QString fullPath;
+        for (int i = 0; i < parts.size(); ++i) {
+            const QString &part = parts[i];
+            fullPath += (fullPath.isEmpty() ? "" : "/") + part;
+            QStandardItem *item = nullptr;
+            for (int j = 0; j < parent->rowCount(); ++j) {
+                if (parent->child(j)->text() == part) {
+                    item = parent->child(j);
+                    break;
+                }
+            }
+            if (!item) {
+                item = new QStandardItem(part);
+                bool isDir = (i == parts.size() - 1 && file.endsWith('/')) || (i < parts.size() - 1);
+                item->setData(fullPath + (isDir ? "/" : ""), Qt::UserRole + 1);
+                item->setData(isDir, Qt::UserRole + 2);
+                parent->appendRow(item);
+            }
+            parent = item;
+        }
+    }
 }
 
 void MainWindow::displayError(const QString &error) {
@@ -51,17 +114,13 @@ void MainWindow::displayError(const QString &error) {
 void MainWindow::displayFileData(const QByteArray &data) {
     QMessageBox msgBox;
     msgBox.setWindowTitle("File Content");
-    QTextStream stream(data);
-    QString text = stream.readAll();
+    QString text = QString::fromUtf8(data);
     if (data.isEmpty()) {
         text = "<Empty File>";
     }
     msgBox.setText(text);
     msgBox.exec();
 }
-
-
-
 
 void MainWindow::onRefreshButtonClicked() {
     viewModel->refreshDevice();
@@ -71,21 +130,25 @@ void MainWindow::onCreateDirectoryClicked() {
     bool ok;
     QString dirName = QInputDialog::getText(this, "Create Directory", "Enter directory name:", QLineEdit::Normal, "", &ok);
     if (ok && !dirName.isEmpty()) {
-        viewModel->createDirectory(dirName);
+        viewModel->createDirectory(dirName.endsWith('/') ? dirName : dirName + '/');
     }
 }
 
 void MainWindow::onDeleteDirectoryClicked() {
-    QListWidgetItem *item = ui->fileListWidget->currentItem();
+    QModelIndex currentIndex = ui->fileTreeView->currentIndex();
+    if (!currentIndex.isValid()) {
+        QMessageBox::warning(this, "Error", "Select a directory to delete.");
+        return;
+    }
+    QStandardItem *item = fileModel->itemFromIndex(currentIndex);
     if (item) {
-        QString path = item->text();
-        if (path.endsWith('/')) {
+        bool isDir = item->data(Qt::UserRole + 2).toBool();
+        QString path = item->data(Qt::UserRole + 1).toString();
+        if (isDir) {
             viewModel->deleteDirectory(path);
         } else {
-            QMessageBox::warning(this, "Error", "Please select a directory (ending with '/').");
+            QMessageBox::warning(this, "Error", "Please select a directory.");
         }
-    } else {
-        QMessageBox::warning(this, "Error", "Select a directory to delete.");
     }
 }
 
@@ -105,29 +168,37 @@ void MainWindow::onWriteFileClicked() {
 }
 
 void MainWindow::onReadFileClicked() {
-    QListWidgetItem *item = ui->fileListWidget->currentItem();
+    QModelIndex currentIndex = ui->fileTreeView->currentIndex();
+    if (!currentIndex.isValid()) {
+        QMessageBox::warning(this, "Error", "Select a file to read.");
+        return;
+    }
+    QStandardItem *item = fileModel->itemFromIndex(currentIndex);
     if (item) {
-        QString path = item->text();
-        if (!path.endsWith('/')) {
+        bool isDir = item->data(Qt::UserRole + 2).toBool();
+        QString path = item->data(Qt::UserRole + 1).toString();
+        if (!isDir) {
             viewModel->readFile(path);
         } else {
             QMessageBox::warning(this, "Error", "Please select a file, not a directory.");
         }
-    } else {
-        QMessageBox::warning(this, "Error", "Select a file to read.");
     }
 }
 
 void MainWindow::onDeleteFileClicked() {
-    QListWidgetItem *item = ui->fileListWidget->currentItem();
+    QModelIndex currentIndex = ui->fileTreeView->currentIndex();
+    if (!currentIndex.isValid()) {
+        QMessageBox::warning(this, "Error", "Select a file to delete.");
+        return;
+    }
+    QStandardItem *item = fileModel->itemFromIndex(currentIndex);
     if (item) {
-        QString path = item->text();
-        if (!path.endsWith('/')) {
+        bool isDir = item->data(Qt::UserRole + 2).toBool();
+        QString path = item->data(Qt::UserRole + 1).toString();
+        if (!isDir) {
             viewModel->deleteFile(path);
         } else {
             QMessageBox::warning(this, "Error", "Please select a file, not a directory.");
         }
-    } else {
-        QMessageBox::warning(this, "Error", "Select a file to delete.");
     }
 }
